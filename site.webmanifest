@@ -1,0 +1,8 @@
+{
+  "name": "Dhaka Decor",
+  "short_name": "Dhaka Decor",
+  "start_url": "/",
+  "display": "standalone",
+  "theme_color": "#f36b21",
+  "background_color": "#101010"
+}
