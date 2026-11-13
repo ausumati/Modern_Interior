@@ -201,6 +201,12 @@ function cardTemplate(item){
   </article>`;
 }
 
+let refreshTimer;
+function refreshTriggers(delay=0){
+  clearTimeout(refreshTimer);
+  refreshTimer=setTimeout(()=>{ if(window.ScrollTrigger && window.__stReady) ScrollTrigger.refresh(); },delay);
+}
+
 function render(cat){
   const d=data[cat], panel=document.getElementById("categoryPanel");
   panel.innerHTML=`
@@ -218,7 +224,7 @@ function render(cat){
             <span class="group-plus">+</span>
           </button>
           <div class="group-content">
-            <div class="space-grid">${g.items.map(cardTemplate).join("")}</div>
+            <div class="group-inner"><div class="space-grid">${g.items.map(cardTemplate).join("")}</div></div>
           </div>
         </section>`).join("")}
     </div>`;
@@ -237,9 +243,20 @@ function render(cat){
         trigger.setAttribute("aria-expanded","true");
         if(window.gsap) gsap.fromTo(group.querySelectorAll(".space-card"),{y:28,opacity:0,rotateX:4},{y:0,opacity:1,rotateX:0,stagger:.045,duration:.55,ease:"power3.out"});
       }
+      refreshTriggers(750); // after the .65s open/close transition finishes
+      // keep the clicked header in view: an open group above it collapses and would otherwise drag the page past it
+      setTimeout(()=>{
+        const top=trigger.getBoundingClientRect().top;
+        if(top<90 || top>window.innerHeight*0.6){
+          const y=window.scrollY+top-100;
+          if(window.__lenis) window.__lenis.scrollTo(y,{duration:.8});
+          else window.scrollTo({top:y,behavior:"smooth"});
+        }
+      },700);
     });
   });
   if(window.gsap) gsap.fromTo(panel.querySelectorAll(".category-group"),{y:25,opacity:0},{y:0,opacity:1,stagger:.05,duration:.6,ease:"power3.out"});
+  refreshTriggers(100);
 }
 
 render("corporate");
@@ -259,13 +276,22 @@ menuButton?.addEventListener("click",()=>{
 mainNav?.querySelectorAll("a").forEach(a=>a.addEventListener("click",()=>document.querySelector(".nav")?.classList.remove("is-menu-open")));
 
 function init(){
-  if(window.Lenis){
+  const reduceMotion=window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if(window.gsap && window.ScrollTrigger) gsap.registerPlugin(ScrollTrigger);
+  if(window.Lenis && !reduceMotion){
     const lenis=new Lenis({duration:1.15,smoothWheel:true});
-    function raf(t){lenis.raf(t);requestAnimationFrame(raf)}
-    requestAnimationFrame(raf);
+    window.__lenis=lenis;
+    if(window.gsap && window.ScrollTrigger){
+      // one shared clock: Lenis drives ScrollTrigger, GSAP ticker drives Lenis
+      lenis.on("scroll",ScrollTrigger.update);
+      gsap.ticker.add(t=>lenis.raf(t*1000));
+      gsap.ticker.lagSmoothing(0);
+    }else{
+      function raf(t){lenis.raf(t);requestAnimationFrame(raf)}
+      requestAnimationFrame(raf);
+    }
   }
-  if(window.gsap && window.ScrollTrigger){
-    gsap.registerPlugin(ScrollTrigger);
+  if(window.gsap && window.ScrollTrigger && !reduceMotion){
     gsap.utils.toArray(".display").forEach(el=>gsap.from(el,{scrollTrigger:{trigger:el,start:"top 86%"},y:70,opacity:0,duration:1,ease:"power3.out"}));
     gsap.utils.toArray(".section-kicker").forEach(el=>gsap.from(el,{scrollTrigger:{trigger:el,start:"top 88%"},x:-25,opacity:0,duration:.7}));
     gsap.to(".hero-media img",{yPercent:12,scale:1.08,scrollTrigger:{trigger:".hero",start:"top top",end:"bottom top",scrub:true}});
@@ -275,20 +301,36 @@ function init(){
     gsap.utils.toArray(".step").forEach((el,i)=>gsap.from(el,{scrollTrigger:{trigger:el,start:"top 88%"},x:35,opacity:0,duration:.7,delay:i*.03}));
     gsap.utils.toArray(".service-grid article").forEach((el,i)=>gsap.from(el,{scrollTrigger:{trigger:el,start:"top 92%"},y:25,opacity:0,duration:.55,delay:(i%4)*.06}));
     gsap.utils.toArray(".gallery-card").forEach((el,i)=>gsap.from(el,{scrollTrigger:{trigger:el,start:"top 90%"},y:60,opacity:0,rotation:i%2?-1.5:1.5,duration:.9,delay:i*.08,ease:"power3.out"}));
+    window.__stReady=true;
+    // images load late and change heights: re-measure once everything is in, and on resize/rotate
+    window.addEventListener("load",()=>refreshTriggers(300));
+    refreshTriggers(1500);
+    let rt;window.addEventListener("resize",()=>{clearTimeout(rt);rt=setTimeout(()=>ScrollTrigger.refresh(),250)});
   }
-  document.querySelectorAll(".gallery-card").forEach(el=>el.addEventListener("mousemove",e=>{
-    const r=el.getBoundingClientRect(),x=(e.clientX-r.left)/r.width-.5,y=(e.clientY-r.top)/r.height-.5;
-    el.style.transform=`perspective(900px) rotateY(${x*4}deg) rotateX(${y*-4}deg)`;
-  }));
-  document.querySelectorAll(".gallery-card").forEach(el=>el.addEventListener("mouseleave",()=>el.style.transform=""));
+  // Hover tilt: desktop (real hover) only, driven by GSAP so it never fights the scroll-in animation
+  if(window.gsap && !reduceMotion && window.matchMedia("(hover:hover) and (pointer:fine)").matches){
+    document.querySelectorAll(".gallery-card").forEach(el=>{
+      el.addEventListener("mousemove",e=>{
+        const r=el.getBoundingClientRect(),x=(e.clientX-r.left)/r.width-.5,y=(e.clientY-r.top)/r.height-.5;
+        gsap.to(el,{rotationY:x*4,rotationX:y*-4,transformPerspective:900,duration:.4,ease:"power2.out",overwrite:"auto"});
+      });
+      el.addEventListener("mouseleave",()=>gsap.to(el,{rotationY:0,rotationX:0,duration:.6,ease:"power3.out",overwrite:"auto"}));
+    });
+  }
 }
 
-window.addEventListener("load",()=>{
+let siteStarted=false;
+function startSite(){
+  if(siteStarted) return;
+  siteStarted=true;
   const loader=document.getElementById("loader"), line=loader.querySelector("i");
-  if(window.gsap) gsap.to(line,{width:"100%",duration:.8,ease:"power2.inOut",onComplete:()=>gsap.to(loader,{autoAlpha:0,duration:.65,pointerEvents:"none"})});
-  else{line.style.width="100%";setTimeout(()=>loader.style.display="none",900)}
+  if(window.gsap) gsap.to(line,{width:"100%",duration:.6,ease:"power2.inOut",onComplete:()=>gsap.to(loader,{autoAlpha:0,duration:.5,pointerEvents:"none"})});
+  else{line.style.width="100%";setTimeout(()=>loader.style.display="none",700)}
   init();
-});
+}
+window.addEventListener("load",startSite);
+// Failsafe: never keep visitors on the loader if a slow image delays the load event
+setTimeout(()=>{ if(!siteStarted && window.gsap) startSite(); },2500);
 
 document.getElementById("contactForm").addEventListener("submit",e=>{
   e.preventDefault();
@@ -300,7 +342,8 @@ document.getElementById("contactForm").addEventListener("submit",e=>{
 });
 // Site-wide light / dark colour mode. Preference is remembered locally.
 const themeButtons=[document.getElementById("themeToggle"),document.getElementById("themeToggleMobile")].filter(Boolean);
-const savedTheme=localStorage.getItem("dhakaDecorTheme");
+let savedTheme=null;
+try{savedTheme=localStorage.getItem("dhakaDecorTheme")}catch(e){}
 if(savedTheme) document.body.dataset.theme=savedTheme;
 function syncThemeButtons(){
   const dark=document.body.dataset.theme==="dark";
@@ -314,6 +357,6 @@ syncThemeButtons();
 themeButtons.forEach(btn=>btn.addEventListener("click",()=>{
   const next=document.body.dataset.theme==="dark"?"light":"dark";
   document.body.dataset.theme=next;
-  localStorage.setItem("dhakaDecorTheme",next);
+  try{localStorage.setItem("dhakaDecorTheme",next)}catch(e){}
   syncThemeButtons();
 }));
